@@ -11,9 +11,9 @@ jobs:
     env:
       # Configure these in repo Settings -> Variables (preferred) or Secrets (fallback)
       # EKS cluster name (e.g., "flask-devops-cluster")
-      EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME || secrets.EKS_CLUSTER_NAME }}
+      EKS_CLUSTER_NAME: my-flask
       # AWS region for ECR/EKS/Terraform
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_REGION: us-east-1
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -66,12 +66,23 @@ jobs:
 
     - name: Update kubeconfig (EKS)
       run: |
-        if [ -z "${EKS_CLUSTER_NAME}" ]; then
-          echo "EKS_CLUSTER_NAME is not set. Set it as a Repository Variable (preferred) or Secret.";
-          echo "GitHub UI: Settings -> Variables (or Secrets) -> Actions -> New variable/secret";
-          exit 1;
-        fi
+        echo "Using AWS_REGION=${AWS_REGION} and EKS_CLUSTER_NAME=${EKS_CLUSTER_NAME}"
         aws eks update-kubeconfig --region "${AWS_REGION}" --name "${EKS_CLUSTER_NAME}"
 
     - name: Deploy to Kubernetes
       run: kubectl apply -f k8s/
+
+    - name: Wait for rollout
+      run: |
+        kubectl rollout status deployment/flask-devops-app-deployment --timeout=180s || true
+        echo "\nResources:" && kubectl get deploy,svc,ingress
+
+    - name: Print Ingress URL
+      run: |
+        HOST=$(kubectl get ingress -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+        echo "Ingress Host: $HOST"
+        if [ -n "$HOST" ]; then
+          echo "Test URLs:"; echo "http://$HOST/"; echo "http://$HOST/health";
+        else
+          echo "Ingress hostname not available yet.";
+        fi

@@ -1,52 +1,111 @@
-# Define the AWS provider
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 3.0"
+############################################################
+# Main infrastructure stack (VPC + EKS)
+# Region: var.aws_region (default us-east-1)
+# Cluster name: var.cluster_name (e.g., my-flask)
+# Requires: providers and versions in versions.tf/providers.tf
+############################################################
+
+########################
+# Caller identity (for EKS aws-auth access)
+########################
+data "aws_caller_identity" "current" {}
+
+########################
+# VPC (2 AZs, 2x public, 2x private)
+########################
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+
+  name = "${var.project_name}-vpc"
+  cidr = var.vpc_cidr
+
+  azs             = var.azs
+  public_subnets  = var.public_subnet_cidrs
+  private_subnets = var.private_subnet_cidrs
+
+  enable_nat_gateway = true
+  single_nat_gateway = true
+
+  # Tag subnets for Kubernetes load balancers at creation time
+  public_subnet_tags = {
+    "kubernetes.io/role/elb"                         = "1"
+    "kubernetes.io/cluster/${var.cluster_name}"     = "shared"
+  }
+
+  private_subnet_tags = {
+    "kubernetes.io/role/internal-elb"                = "1"
+    "kubernetes.io/cluster/${var.cluster_name}"     = "shared"
+  }
+
+  tags = {
+    Project = var.project_name
+  }
+}
+
+########################
+# EKS Cluster + Managed Node Group
+########################
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.8" # EKS module v20 for AWS provider v5
+
+  cluster_name    = var.cluster_name
+  cluster_version = var.kubernetes_version
+
+  vpc_id                   = module.vpc.vpc_id
+  subnet_ids               = module.vpc.private_subnets
+  control_plane_subnet_ids = module.vpc.private_subnets
+
+  cluster_endpoint_public_access = true
+
+  enable_irsa = true
+  enable_cluster_creator_admin_permissions = true
+
+  eks_managed_node_groups = {
+    default = {
+      min_size     = 2
+      max_size     = 4
+      desired_size = 2
+
+      instance_types = [var.node_instance_type]
+      capacity_type  = "ON_DEMAND"
+      subnets        = module.vpc.private_subnets
     }
   }
-}
 
-provider "aws" {
-  region = var.aws_region
-}
-
-# -----------------------------------------------------------------------------
-# VPC and Networking
-# -----------------------------------------------------------------------------
-resource "aws_vpc" "main" {
-  cidr_block = "10.0.0.0/16"
   tags = {
-    Name = "${var.project_name}-vpc"
+    Project = var.project_name
   }
 }
 
-resource "aws_subnet" "public_subnet" {
-  count             = 2
-  cidr_block        = "10.0.${count.index + 1}.0/24"
-  vpc_id            = aws_vpc.main.id
-  map_public_ip_on_launch = true
-  tags = {
-    Name = "${var.project_name}-public-subnet-${count.index}"
-  }
+########################
+# Subnet tags handled in VPC module (see public_subnet_tags/private_subnet_tags)
+########################
+
+########################
+# Outputs
+########################
+output "vpc_id" {
+  value = module.vpc.vpc_id
 }
 
-# -----------------------------------------------------------------------------
-# EKS Cluster (Note: This is a basic example. A full production setup requires more configuration.)
-# -----------------------------------------------------------------------------
-# resource "aws_eks_cluster" "main" {
-#   name     = "${var.project_name}-cluster"
-#   role_arn = aws_iam_role.eks_master.arn
+output "public_subnets" {
+  value = module.vpc.public_subnets
+}
 
-#   vpc_config {
-#     subnet_ids = [aws_subnet.public_subnet[0].id, aws_subnet.public_subnet[1].id]
-#   }
-#   tags = {
-#     Name = "${var.project_name}-cluster"
-#   }
-# }
+output "private_subnets" {
+  value = module.vpc.private_subnets
+}
 
-# Note: The above EKS resource is commented out as it requires IAM roles and more complex setup.
-# In a real-world scenario, you would uncomment this and add the necessary IAM resources.
-# This file serves as a starting point to demonstrate the structure.
+output "cluster_name" {
+  value = module.eks.cluster_name
+}
+
+output "cluster_endpoint" {
+  value = module.eks.cluster_endpoint
+}
+
+output "cluster_certificate_authority_data" {
+  value = module.eks.cluster_certificate_authority_data
+}
