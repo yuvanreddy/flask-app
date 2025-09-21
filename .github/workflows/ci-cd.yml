@@ -77,12 +77,18 @@ jobs:
         kubectl rollout status deployment/flask-devops-app-deployment --timeout=180s || true
         echo "\nResources:" && kubectl get deploy,svc,ingress
 
-    - name: Print Ingress URL
+    - name: Print Ingress URL (with retry)
       run: |
-        HOST=$(kubectl get ingress -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
-        echo "Ingress Host: $HOST"
-        if [ -n "$HOST" ]; then
-          echo "Test URLs:"; echo "http://$HOST/"; echo "http://$HOST/health";
-        else
-          echo "Ingress hostname not available yet.";
-        fi
+        echo "Waiting for Ingress hostname (up to 10 minutes)..."
+        for i in {1..60}; do
+          HOST=$(kubectl get ingress -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+          if [ -n "$HOST" ]; then
+            echo "Ingress Host: $HOST";
+            echo "Test URLs:"; echo "http://$HOST/"; echo "http://$HOST/health";
+            exit 0;
+          fi
+          echo "[$i/60] Ingress hostname not ready yet. Retrying in 10s..."; sleep 10;
+        done
+        echo "Ingress hostname not available after waiting. Describing ingress:";
+        kubectl describe ingress || true
+        exit 1
