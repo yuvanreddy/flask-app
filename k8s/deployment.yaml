@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flask-devops-app-deployment
+  labels:
+    app: flask-devops-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: flask-devops-app
+  template:
+    metadata:
+      labels:
+        app: flask-devops-app
+    spec:
+      containers:
+      - name: flask-devops-app
+        # This image name now points to your ECR repository.
+        # Replace <your-aws-account-id> with your actual AWS account ID.
+        image: 816069153839.dkr.ecr.us-east-1.amazonaws.com/myrepo_flask:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        # Add probes for health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        # Resource requests and limits
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+      # If your ECR repository is private, create a pull secret and reference it here.
+      # kubectl create secret docker-registry ecr-regcred --docker-server=*.dkr.ecr.<region>.amazonaws.com --docker-username=AWS --docker-password=$(aws ecr get-login-password)
+      imagePullSecrets:
+      - name: ecr-regcred
