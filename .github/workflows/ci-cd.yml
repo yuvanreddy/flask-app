@@ -14,6 +14,8 @@ jobs:
       EKS_CLUSTER_NAME: my-flask
       # AWS region for ECR/EKS/Terraform
       AWS_REGION: us-east-1
+      # When true, skip applying ingress resources (useful when ALB is blocked by account restrictions)
+      DISABLE_INGRESS: "true"
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v4
@@ -90,13 +92,77 @@ jobs:
         echo "Using AWS_REGION=${AWS_REGION} and EKS_CLUSTER_NAME=${EKS_CLUSTER_NAME}"
         aws eks update-kubeconfig --region "${AWS_REGION}" --name "${EKS_CLUSTER_NAME}"
 
-    - name: Deploy to Kubernetes
-      run: kubectl apply -f k8s/
+    - name: Deploy to Kubernetes (core manifests only when DISABLE_INGRESS=true)
+      shell: bash
+      run: |
+        set -e
+        if [ "${DISABLE_INGRESS}" = "true" ]; then
+          echo "DISABLE_INGRESS=true -> applying core manifests only (deployment, service, servicemonitor)";
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          if [ -f k8s/servicemonitor.yaml ]; then
+            kubectl apply -f k8s/servicemonitor.yaml || true
+          fi
+        else
+          echo "DISABLE_INGRESS not set -> applying entire k8s/ directory";
+          kubectl apply -f k8s/
+        fi
 
     - name: Wait for rollout
       run: |
         kubectl rollout status deployment/flask-devops-app-deployment --timeout=180s || true
-        echo "\nResources:" && kubectl get deploy,svc,ingress
+        echo "\nResources:" && kubectl get deploy,svc,ingress || true
+
+    - name: Port-forward services locally (Flask, Grafana, Prometheus) and validate
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Starting port-forwards in background..."
+        # Flask (default namespace): service port 80 -> localhost:8080
+        kubectl port-forward svc/flask-devops-app-service 8080:80 >/tmp/pf_flask.log 2>&1 &
+        PF_FLASK_PID=$!
+
+        # Grafana (monitoring ns): service typically exposes port 80 mapped to container 3000
+        # Forward localhost:3000 -> service:80
+        kubectl -n monitoring port-forward svc/kube-prometheus-stack-grafana 3000:80 >/tmp/pf_grafana.log 2>&1 &
+        PF_GRAFANA_PID=$! || true
+
+        # Prometheus (monitoring ns): try common service names
+        PROM_SVC=""
+        if kubectl -n monitoring get svc kube-prometheus-stack-prometheus >/dev/null 2>&1; then
+          PROM_SVC="kube-prometheus-stack-prometheus"
+          PROM_SVC_PORT=9090
+        elif kubectl -n monitoring get svc prometheus-operated >/dev/null 2>&1; then
+          PROM_SVC="prometheus-operated"
+          PROM_SVC_PORT=9090
+        fi
+        if [ -n "${PROM_SVC}" ]; then
+          kubectl -n monitoring port-forward svc/${PROM_SVC} 9090:${PROM_SVC_PORT} >/tmp/pf_prom.log 2>&1 &
+          PF_PROM_PID=$! || true
+        else
+          echo "Prometheus service not found; skipping Prometheus port-forward"
+        fi
+
+        echo "Waiting for port-forwards to establish..."
+        sleep 8
+
+        echo "Validate Flask health endpoint:"
+        (curl -sSf http://localhost:8080/health || curl -sSf http://localhost:8080) || echo "Flask health check failed"
+
+        echo "Validate Grafana login page:"
+        if curl -sSf http://localhost:3000/login >/dev/null 2>&1; then echo "Grafana reachable on :3000"; else echo "Grafana not reachable"; fi
+
+        echo "Validate Prometheus UI:"
+        if curl -sSf http://localhost:9090/graph >/dev/null 2>&1; then echo "Prometheus reachable on :9090"; else echo "Prometheus not reachable"; fi
+
+        echo "Stopping port-forwards..."
+        kill ${PF_FLASK_PID} 2>/dev/null || true
+        kill ${PF_GRAFANA_PID:-0} 2>/dev/null || true
+        kill ${PF_PROM_PID:-0} 2>/dev/null || true
+
+        echo "Port-forward logs:"
+        for f in /tmp/pf_*.log; do echo "--- $f ---"; cat "$f" || true; done
 
     - name: Print Ingress URL (with retry)
       run: |
