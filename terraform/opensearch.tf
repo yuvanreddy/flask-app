@@ -10,6 +10,39 @@ locals {
   opensearch_domain_name = "${var.project_name}-logs"
 }
 
+# IRSA role for logging-ops Job to manage OpenSearch (ISM policy)
+module "logging_ops_irsa" {
+  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version = "~> 5.38"
+
+  role_name = "${var.cluster_name}-logging-ops"
+
+  oidc_providers = {
+    this = {
+      provider_arn = module.eks.oidc_provider_arn
+      namespace_service_accounts = [
+        "default:logging-ops"
+      ]
+    }
+  }
+
+  role_policy_statements = {
+    es_access = {
+      effect = "Allow"
+      actions = [
+        "es:ESHttpGet",
+        "es:ESHttpHead",
+        "es:ESHttpPost",
+        "es:ESHttpPut",
+        "es:ESHttpDelete"
+      ]
+      resources = [
+        "arn:aws:es:${var.aws_region}:${data.aws_caller_identity.current.account_id}:domain/${local.opensearch_domain_name}/*"
+      ]
+    }
+  }
+}
+
 # Security group for OpenSearch domain
 resource "aws_security_group" "opensearch" {
   name        = "${var.project_name}-opensearch-sg"
@@ -177,6 +210,31 @@ resource "helm_release" "aws_for_fluent_bit" {
   depends_on = [
     module.eks,
     aws_opensearch_domain.logs
+  ]
+}
+
+## Deploy logging-ops chart to configure ISM policy in OpenSearch
+resource "helm_release" "logging_ops" {
+  name       = "logging-ops"
+  chart      = "${path.module}/../charts/logging-ops"
+  namespace  = "default"
+
+  set {
+    name  = "opensearch.endpoint"
+    value = aws_opensearch_domain.logs.endpoint
+  }
+  set {
+    name  = "serviceAccount.name"
+    value = "logging-ops"
+  }
+  set {
+    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = module.logging_ops_irsa.iam_role_arn
+  }
+
+  depends_on = [
+    aws_opensearch_domain.logs,
+    module.logging_ops_irsa
   ]
 }
 

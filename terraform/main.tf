@@ -61,6 +61,15 @@ module "eks" {
 
   enable_irsa                              = true
   enable_cluster_creator_admin_permissions = true
+  manage_aws_auth                          = true
+
+  aws_auth_roles = [
+    {
+      rolearn  = aws_iam_role.github_deploy.arn
+      username = "github-deploy"
+      groups   = ["system:masters"]
+    }
+  ]
 
   eks_managed_node_groups = {
     default = {

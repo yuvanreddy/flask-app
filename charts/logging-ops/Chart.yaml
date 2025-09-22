@@ -1,0 +1,5 @@
+apiVersion: v2
+name: logging-ops
+version: 0.1.0
+description: One-off operational jobs for logging stack (e.g., OpenSearch ISM)
+type: application

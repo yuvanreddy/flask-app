@@ -1,0 +1,18 @@
+opensearch:
+  # This should match terraform output aws_opensearch_domain.logs.endpoint
+  endpoint: ""
+  region: us-east-1
+
+ism:
+  policyName: kubernetes-logs-ism
+  indexPrefix: kubernetes-logs
+  rolloverMaxAge: 1d
+  rolloverMaxSize: 5gb
+  retentionDays: 14
+
+serviceAccount:
+  name: logging-ops
+  annotations: {}
+  # If you want to use IRSA for this job, set the following after creating a role with es:ESHttp*.
+  # annotations:
+  #   eks.amazonaws.com/role-arn: <ROLE_ARN_WITH_ES_PERMS>
