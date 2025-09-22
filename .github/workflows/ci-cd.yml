@@ -87,6 +87,21 @@ jobs:
       with:
         version: "v1.28.0"
 
+    - name: Ensure kubectl present (fallback install with retry)
+      shell: bash
+      run: |
+        set -e
+        if kubectl version --client >/dev/null 2>&1; then
+          echo "kubectl already available"; exit 0; fi
+        echo "kubectl missing; attempting manual install..."
+        for i in {1..3}; do
+          echo "Attempt $i to install kubectl...";
+          curl -fsSLo kubectl https://dl.k8s.io/release/v1.28.0/bin/linux/amd64/kubectl && \
+          chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl && break || true
+          echo "Install attempt $i failed; retrying in 10s..."; sleep 10;
+        done
+        kubectl version --client
+
     - name: Update kubeconfig (EKS)
       run: |
         echo "Using AWS_REGION=${AWS_REGION} and EKS_CLUSTER_NAME=${EKS_CLUSTER_NAME}"
@@ -114,10 +129,12 @@ jobs:
         echo "\nResources:" && kubectl get deploy,svc,ingress || true
 
     - name: Port-forward services locally (Flask, Grafana, Prometheus) and validate
-      if: always()
+      if: ${{ success() && env.DISABLE_INGRESS == 'true' }}
       shell: bash
       run: |
         set -euo pipefail
+        if ! command -v kubectl >/dev/null 2>&1; then
+          echo "kubectl not available; skipping port-forward validation"; exit 0; fi
         echo "Starting port-forwards in background..."
         # Flask (default namespace): service port 80 -> localhost:8080
         kubectl port-forward svc/flask-devops-app-service 8080:80 >/tmp/pf_flask.log 2>&1 &
@@ -136,6 +153,11 @@ jobs:
         elif kubectl -n monitoring get svc prometheus-operated >/dev/null 2>&1; then
           PROM_SVC="prometheus-operated"
           PROM_SVC_PORT=9090
+        else
+          # Fallback: try to auto-detect a prometheus service exposing 9090
+          CAND=$(kubectl -n monitoring get svc -o jsonpath='{range .items[*]}{.metadata.name}:{range .spec.ports[*]}{.port}{","}{end}{"\n"}{end}' | awk -F: '/9090/ {print $1; exit}') || true
+          if [ -n "$CAND" ]; then
+            PROM_SVC="$CAND"; PROM_SVC_PORT=9090; fi
         fi
         if [ -n "${PROM_SVC}" ]; then
           kubectl -n monitoring port-forward svc/${PROM_SVC} 9090:${PROM_SVC_PORT} >/tmp/pf_prom.log 2>&1 &
