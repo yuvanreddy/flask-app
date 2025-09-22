@@ -49,7 +49,7 @@ jobs:
         if ! terraform state show aws_ecr_repository.app >/dev/null 2>&1; then
           if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
             echo "Repository exists in AWS. Importing into Terraform state..."
-            terraform import aws_ecr_repository.app 816069153839/$REPO_NAME
+            terraform import aws_ecr_repository.app $REPO_NAME
           else
             echo "Repository does not exist in AWS for region ${AWS_REGION}. Skipping import; Terraform will create it during apply."
           fi
