@@ -113,13 +113,13 @@ jobs:
         set -e
         REGISTRY="${{ steps.login-ecr.outputs.registry }}"
         echo "Creating/Updating docker-registry secret 'ecr-regcred' for $REGISTRY in default namespace"
-        aws ecr get-login-password --region "${AWS_REGION}" | \
-          kubectl create secret docker-registry ecr-regcred \
-            --docker-server="$REGISTRY" \
-            --docker-username=AWS \
-            --docker-password-stdin \
-            --namespace default \
-            --dry-run=client -o yaml | kubectl apply -f -
+        PASS=$(aws ecr get-login-password --region "${AWS_REGION}")
+        kubectl create secret docker-registry ecr-regcred \
+          --docker-server="$REGISTRY" \
+          --docker-username=AWS \
+          --docker-password="$PASS" \
+          --namespace default \
+          --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Deploy to Kubernetes (core manifests only when DISABLE_INGRESS=true)
       shell: bash
