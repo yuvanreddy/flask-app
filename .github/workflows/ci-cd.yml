@@ -165,6 +165,7 @@ jobs:
         for f in /tmp/pf_*.log; do echo "--- $f ---"; cat "$f" || true; done
 
     - name: Print Ingress URL (with retry)
+      if: ${{ env.DISABLE_INGRESS != 'true' }}
       run: |
         echo "Waiting for Ingress hostname (up to 10 minutes)..."
         for i in {1..60}; do
