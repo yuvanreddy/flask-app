@@ -44,11 +44,17 @@ jobs:
         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       run: |
         set -e
+        REPO_NAME="myrepo_flask"
+        echo "Checking if $REPO_NAME exists in AWS region ${AWS_REGION}..."
         if ! terraform state show aws_ecr_repository.app >/dev/null 2>&1; then
-          echo "Importing existing ECR repo into state..."
-          terraform import aws_ecr_repository.app 816069153839/myrepo_flask
+          if aws ecr describe-repositories --repository-names "$REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Repository exists in AWS. Importing into Terraform state..."
+            terraform import aws_ecr_repository.app 816069153839/$REPO_NAME
+          else
+            echo "Repository does not exist in AWS for region ${AWS_REGION}. Skipping import; Terraform will create it during apply."
+          fi
         else
-          echo "ECR repo already in state. Skipping import."
+          echo "ECR repo already in Terraform state. Skipping import."
         fi
 
     - name: Terraform Apply
